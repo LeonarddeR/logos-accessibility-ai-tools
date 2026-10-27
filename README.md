@@ -34,14 +34,25 @@ Example requests:
 
 ## Installing
 
-Add this folder as a plugin marketplace and install the plugin:
+In Claude Code, add this repository as a plugin marketplace and install the plugin:
 
 ```
-/plugin marketplace add <path to this folder>
+/plugin marketplace add LeonarddeR/logos-accessibility-ai-tools
 /plugin install logos-accessibility-skills@logos-accessibility-ai-tools
 ```
 
-To try it for one session without installing, start Claude Code with `claude --plugin-dir <path to this folder>`.
+To get later versions, run `/plugin marketplace update logos-accessibility-ai-tools`.
+
+### From a local copy
+
+If you work on the plugin itself, clone the repository and add your copy instead:
+
+```
+/plugin marketplace add <path to your copy>
+/plugin install logos-accessibility-skills@logos-accessibility-ai-tools
+```
+
+To try a local copy for one session without installing it, start Claude Code with `claude --plugin-dir <path to your copy>`.
 
 ## Notes
 
