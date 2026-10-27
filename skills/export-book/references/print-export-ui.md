@@ -72,13 +72,30 @@ The page markers in the HTML of a multi-volume book read "V 1, p 2".
 - **Enter**: the script posts WM_KEYDOWN/WM_KEYUP to the window after focusing the control with UI Automation. Posted keys go only to that window and don't mix with keys held down on the keyboard.
 - **Ctrl+P**: this only works with real keyboard input (SendKeys or SendInput), because WPF checks the actual state of the Ctrl key. Keys held down physically mix with it: once, Caps Lock was held (screen readers use it as a modifier) and Ctrl+P did nothing. If it fails, the user can press Ctrl+P on the book themselves.
 
+## Logos's data folder and library catalog
+
+Logos keeps its data in `%LOCALAPPDATA%\Logos\Data\<random id>\` (Verbum: `%LOCALAPPDATA%\Verbum\...`):
+
+- **Books**: `ResourceManager\Resources\*.logos4`, for example `BDAG.logos4`, `LOUWNIDA.logos4`, `NA28APPARATUS.logos4`. A short readable header ("LRES01", then the resource ID such as "LLS:46.30.18") is followed by encrypted content tied to the user's license. Don't try to read or decrypt them: that would bypass Logos's copy protection. Next to them are datasets in other formats (`.lbs…`).
+- **Library catalog**: `LibraryCatalog\catalog.db`, an SQLite database that Logos keeps open (WAL mode), so the script copies `catalog.db`, `-wal` and `-shm` to a temporary folder and reads the copy with Windows's own `winsqlite3.dll`.
+- **Resource administration**: `ResourceManager\ResourceManager.db` (SQLite) lists the 432 books actually in this library (table `Resources`).
+
+The catalog's `Records` table has one row per book Logos knows about, including many the user doesn't own. The useful columns:
+
+- `ResourceId`, such as `LLS:46.30.18` (BDAG), `LLS:46.30.4` (Louw-Nida), `LLS:NIDNTTREV` (NIDNTTE), `LLS:NA28APPARATUS`.
+- `Title` (as on the book's tab in Logos) and `AbbreviatedTitle` ("BDAG", "Louw-Nida", "NIDNTTE", "NA28 Apparatus").
+- `Availability`: 2 for books in the user's library (432 records, matching `ResourceManager.db`), 1 for the others.
+- `MilestoneIndexes`, how the book is indexed, as tab-separated `kind;scheme;…` items. `Reference;page` means page numbers (BDAG), `Reference;vp` means volume and page (Louw-Nida, NIDNTTE), `Reference;bible+…` means Bible verses. Bibles have no page index at all, so they can only be exported by section.
+
+The table `AlternateResourceIds` holds short IDs such as `bdag`, `louwnida`, `nidnttrev`, `na28apparatus` (plus `lls:…` variants). These are the IDs in Logos's links: `https://ref.ly/logosres/bdag?…` in exported HTML, and `logosres:bdag`, which opens the book in the running Logos (the protocol is registered to Logos.exe). The script uses that to open a book named with `-Book`. Logos then makes it the active book, so Ctrl+P opens Print/Export for it even with other books on screen.
+
 ## Opening and closing books without the mouse
 
 Tested while the user was away; it all needs Logos in the foreground and real keystrokes, so do it only when nobody is typing.
 
 - **Close the open book**: Ctrl+F4 in the main window. The close buttons on the book tabs don't support UI Automation.
 - **Close Print/Export**: WindowPattern.Close() on its window.
-- **Open a book**: Alt+C puts the cursor in the Command box (automation id `CommandTextBox`; the toolbar button "Command:" itself doesn't support UI Automation). Set the book's title in the box with ValuePattern; if it already holds that text, clear it first, or no suggestions appear. A list of suggestions follows (ListItems whose names are an internal type name; their text is in Text children, plus an empty Text). Select the one reading "Open <title>" with SelectionItemPattern and press Enter. The first suggestion is often a Factbook entry, so don't just press Enter.
+- **Open a book**: preferably `Start-Process "logosres:<short id>"` (see above). Through the interface: Alt+C puts the cursor in the Command box (automation id `CommandTextBox`; the toolbar button "Command:" itself doesn't support UI Automation). Set the book's title in the box with ValuePattern; if it already holds that text, clear it first, or no suggestions appear. A list of suggestions follows (ListItems whose names are an internal type name; their text is in Text children, plus an empty Text). Select the one reading "Open <title>" with SelectionItemPattern and press Enter. The first suggestion is often a Factbook entry, so don't just press Enter.
 - **Ctrl+P** then opens Print/Export for the new book, which is the only one open.
 
 ## Inspecting the UI yourself

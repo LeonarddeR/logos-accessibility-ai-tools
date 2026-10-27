@@ -16,7 +16,10 @@ don't exist are recognised because Logos ignores ranges for them.
 
 Logos is driven through Windows UI Automation (the UIAutomationClient assembly that
 ships with Windows), plus a few Win32 calls for keystrokes and the Save As dialog.
-Nothing needs to be installed. Works in Windows PowerShell 5.1 and PowerShell 7.
+Logos's library catalog, an SQLite database, is read with the SQLite that ships with
+Windows (winsqlite3.dll); it tells whether a book is numbered by page, by volume and
+page, or not at all. Nothing needs to be installed. Works in Windows PowerShell 5.1
+and PowerShell 7.
 
 Existing chunk files in the output folder are skipped, so an interrupted export can
 be resumed by running the same command again.
@@ -29,6 +32,12 @@ powershell -NoProfile -File export-book.ps1 -OutDir C:\Books\LouwNida -Volume 2 
 
 .EXAMPLE
 powershell -NoProfile -File export-book.ps1 -OutDir C:\Books\BDAG -VerifyOnly
+
+.EXAMPLE
+powershell -NoProfile -File export-book.ps1 -ListBooks "Louw"
+
+.EXAMPLE
+powershell -NoProfile -File export-book.ps1 -Book "Louw-Nida" -OutDir C:\Books\LouwNida
 
 .EXAMPLE
 powershell -NoProfile -File export-book.ps1 -ListSections
@@ -44,8 +53,16 @@ last subsection: "10 KATA LOUKAN, Chapter 1 to Chapter 6.html".
 #>
 [CmdletBinding()]
 param(
-    # Folder for the HTML files. Required, except with -ListSections.
+    # Folder for the HTML files. Required, except with -ListBooks, -ListSections and -Probe.
     [string] $OutDir = '',
+    # The book to export: its title, abbreviated title or resource ID, or part of it, as
+    # long as only one book in the library matches. The script opens it in Logos.
+    # Without -Book, the script uses the book in the open Print/Export window, or the
+    # one visible book.
+    [string] $Book = '',
+    # Search the library for books whose title, abbreviated title or resource ID
+    # contains this text, list them, and stop.
+    [string] $ListBooks = '',
     # List the book's top-level sections, numbered, and stop.
     [switch] $ListSections,
     # Export these top-level sections (numbers from -ListSections, e.g. "8-34" or
@@ -213,6 +230,62 @@ public static class LogosExportNative
     }
 
     public static void SetText(IntPtr hWnd, string text) { SendMessage(hWnd, WM_SETTEXT, IntPtr.Zero, text); }
+
+    // SQLite as shipped with Windows 10 and later (winsqlite3.dll), for reading Logos's
+    // library catalog.
+    [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.StdCall)] static extern int sqlite3_open_v2(byte[] filename, out IntPtr db, int flags, IntPtr vfs);
+    [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.StdCall)] static extern int sqlite3_prepare_v2(IntPtr db, byte[] sql, int length, out IntPtr statement, IntPtr tail);
+    [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.StdCall)] static extern int sqlite3_bind_text(IntPtr statement, int index, byte[] value, int length, IntPtr destructor);
+    [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.StdCall)] static extern int sqlite3_step(IntPtr statement);
+    [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.StdCall)] static extern int sqlite3_column_count(IntPtr statement);
+    [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.StdCall)] static extern IntPtr sqlite3_column_text(IntPtr statement, int column);
+    [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.StdCall)] static extern int sqlite3_column_bytes(IntPtr statement, int column);
+    [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.StdCall)] static extern int sqlite3_finalize(IntPtr statement);
+    [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.StdCall)] static extern int sqlite3_close(IntPtr db);
+    [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.StdCall)] static extern IntPtr sqlite3_errmsg(IntPtr db);
+
+    const int SQLITE_OPEN_READWRITE = 2, SQLITE_ROW = 100;
+
+    static byte[] Utf8(string text) { return Encoding.UTF8.GetBytes(text + "\0"); }
+
+    // Runs a query with an optional text parameter (?1) and returns the rows as strings.
+    public static List<string[]> Query(string path, string sql, string parameter)
+    {
+        IntPtr db;
+        if (sqlite3_open_v2(Utf8(path), out db, SQLITE_OPEN_READWRITE, IntPtr.Zero) != 0)
+        {
+            sqlite3_close(db);
+            throw new Exception("Could not open the Logos library catalog.");
+        }
+        try
+        {
+            IntPtr statement;
+            if (sqlite3_prepare_v2(db, Utf8(sql), -1, out statement, IntPtr.Zero) != 0)
+                throw new Exception("Library catalog query failed: " + Marshal.PtrToStringAnsi(sqlite3_errmsg(db)));
+            try
+            {
+                if (parameter != null) sqlite3_bind_text(statement, 1, Utf8(parameter), -1, new IntPtr(-1));
+                List<string[]> rows = new List<string[]>();
+                int columns = sqlite3_column_count(statement);
+                while (sqlite3_step(statement) == SQLITE_ROW)
+                {
+                    string[] row = new string[columns];
+                    for (int i = 0; i < columns; i++)
+                    {
+                        IntPtr text = sqlite3_column_text(statement, i);
+                        if (text == IntPtr.Zero) continue;
+                        byte[] bytes = new byte[sqlite3_column_bytes(statement, i)];
+                        Marshal.Copy(text, bytes, 0, bytes.Length);
+                        row[i] = Encoding.UTF8.GetString(bytes);
+                    }
+                    rows.Add(row);
+                }
+                return rows;
+            }
+            finally { sqlite3_finalize(statement); }
+        }
+        finally { sqlite3_close(db); }
+    }
 }
 '@
 }
@@ -229,6 +302,12 @@ function Write-Log([string] $Message) {
     $line = '{0:HH:mm:ss} {1}' -f (Get-Date), $Message
     Write-Host $line
     if ($script:LogFile) { Add-Content -LiteralPath $script:LogFile -Value $line -Encoding UTF8 }
+}
+
+# Stops the export for a reason that running the same command again won't fix.
+function Stop-Export([string] $Message) {
+    $script:Final = $true
+    throw $Message
 }
 
 function New-Condition($Property, $Value) {
@@ -330,15 +409,9 @@ function Get-RangeText {
     catch { $null }
 }
 
-function Open-Panel {
-    $panel = Find-Panel
-    if ($panel -ne [IntPtr]::Zero) {
-        Write-Log 'The Print/Export window is already open; using it.'
-        return $panel
-    }
-
+function Get-MainWindow {
     $main = [LogosExportNative]::TopLevelWindows($script:LogosId) |
-        Where-Object { [LogosExportNative]::Owner($_) -eq [IntPtr]::Zero -and [LogosExportNative]::Title($_) } |
+        Where-Object { [LogosExportNative]::Owner($_) -eq [IntPtr]::Zero -and [LogosExportNative]::Title($_) -and [LogosExportNative]::Title($_) -ne $PanelTitle } |
         Select-Object -First 1
     if (-not $main) { throw "Logos has no open window. Open the book in Logos and run again." }
     $mainElement = $AE::FromHandle($main)
@@ -348,35 +421,189 @@ function Open-Panel {
         $window.SetWindowVisualState([System.Windows.Automation.WindowVisualState]::Normal)
         Start-Sleep -Seconds 1
     }
+    $mainElement
+}
 
-    $documents = $mainElement.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+# The books visible in the main window, as objects with the book's Title (from its
+# tab) and its Document (the text element).
+function Get-VisibleBooks($MainElement) {
+    $documents = $MainElement.FindAll([System.Windows.Automation.TreeScope]::Descendants,
         (New-Object System.Windows.Automation.AndCondition(
             (New-Condition $AE::ControlTypeProperty ([System.Windows.Automation.ControlType]::Edit)),
-            (New-Condition $AE::NameProperty 'Document')))) |
-        Where-Object { -not $_.Current.IsOffscreen }
-    $documents = @($documents)
-    if ($documents.Count -ne 1) {
-        throw ("Found $($documents.Count) visible books in Logos, so I can't tell which one to export. " +
-            "Open Print/Export yourself with Ctrl+P on the book, then run again.")
+            (New-Condition $AE::NameProperty 'Document'))))
+    foreach ($document in $documents) {
+        if ($document.Current.IsOffscreen) { continue }
+        $tab = $document
+        while ($tab -and $tab.Current.ControlType -ne [System.Windows.Automation.ControlType]::TabItem) { $tab = $Walker.GetParent($tab) }
+        [pscustomobject]@{ Title = $(if ($tab) { $tab.Current.Name } else { '' }); Document = $document }
     }
-    $tab = $documents[0]
-    while ($tab -and $tab.Current.ControlType -ne [System.Windows.Automation.ControlType]::TabItem) { $tab = $Walker.GetParent($tab) }
-    $bookName = if ($tab) { $tab.Current.Name } else { 'the open book' }
-    Write-Log "Opening Print/Export with Ctrl+P on: $bookName"
+}
 
+# Presses Ctrl+P in Logos, which opens Print/Export for the active book.
+function Send-PrintShortcut($MainElement, $Document) {
     # Ctrl+P is a WPF keyboard shortcut and only fires on real key events, which
     # combine with keys held down physically (such as a screen reader key); hence
     # the second attempt.
     Add-Type -AssemblyName System.Windows.Forms
     for ($attempt = 1; $attempt -le 2; $attempt++) {
-        $mainElement.SetFocus()
-        try { $documents[0].SetFocus() } catch { }
+        $MainElement.SetFocus()
+        if ($Document) { try { $Document.SetFocus() } catch { } }
         Start-Sleep -Milliseconds 300
         [System.Windows.Forms.SendKeys]::SendWait('^p')
         $panel = Wait-Until { $p = Find-Panel; if ($p -ne [IntPtr]::Zero) { $p } } 15
         if ($panel) { return $panel }
     }
     throw "Ctrl+P did not open the Print/Export window. Press Ctrl+P on the book yourself, then run again."
+}
+
+# Returns the Print/Export window, opening it with Ctrl+P on the one visible book if
+# needed, and notes the book's title when it can tell.
+function Open-Panel {
+    $panel = Find-Panel
+    $books = @(Get-VisibleBooks (Get-MainWindow))
+    if ($books.Count -eq 1) { $script:BookTitle = $books[0].Title }
+    if ($panel -ne [IntPtr]::Zero) {
+        Write-Log 'The Print/Export window is already open; using it.'
+        return $panel
+    }
+    if ($books.Count -ne 1) {
+        throw ("Found $($books.Count) visible books in Logos, so I can't tell which one to export. " +
+            "Name the book with -Book, or open Print/Export yourself with Ctrl+P on the book, then run again.")
+    }
+    Write-Log "Opening Print/Export with Ctrl+P on: $($books[0].Title)"
+    Send-PrintShortcut (Get-MainWindow) $books[0].Document
+}
+
+# Opens the book in Logos through its logosres: link and then Print/Export for it.
+# A Print/Export window that is already open belongs to some other book, so it is
+# closed first.
+function Open-Book($Record) {
+    $panel = Find-Panel
+    if ($panel -ne [IntPtr]::Zero) {
+        Write-Log 'Closing the Print/Export window that is open, which may belong to another book.'
+        $AE::FromHandle($panel).GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()
+        [void](Wait-Until { (Find-Panel) -eq [IntPtr]::Zero } 10)
+    }
+    Write-Log "Opening $($Record.Title) in Logos."
+    Start-Process "logosres:$($Record.LinkId)"
+    $main = Get-MainWindow
+    $opened = Wait-Until { Get-VisibleBooks $main | Where-Object { $_.Title -eq $Record.Title } | Select-Object -First 1 } 60 500
+    if (-not $opened) { throw "Logos did not open $($Record.Title) within a minute." }
+    $script:BookTitle = $Record.Title
+    Start-Sleep -Seconds 2   # let Logos finish showing the book before Ctrl+P
+    # The book Logos just opened is the active one, which is where Ctrl+P goes.
+    Send-PrintShortcut $main $null
+}
+
+# --- Library catalog ------------------------------------------------------------------
+
+# Logos keeps its library catalog in an SQLite database, LibraryCatalog\catalog.db in
+# its data folder. For each book it lists, among other things, how the book is indexed
+# (MilestoneIndexes): "Reference;page;..." for page numbers, "Reference;vp;..." for
+# volume and page, and neither for books without page numbers (Bibles, for example).
+# Books in the user's library have Availability 2. Logos keeps the database open, so
+# the script reads a copy.
+
+function Get-CatalogPath {
+    $exe = (Get-Process -Name $ProcessName -ErrorAction SilentlyContinue | Select-Object -First 1).Path
+    $root = if ($exe) { Split-Path (Split-Path $exe) } else { Join-Path $env:LOCALAPPDATA $ProcessName }
+    Get-ChildItem -Path (Join-Path $root 'Data\*\LibraryCatalog\catalog.db') -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+}
+
+function Invoke-CatalogQuery([string] $Sql, [string] $Parameter) {
+    $catalog = Get-CatalogPath
+    if (-not $catalog) { throw "Could not find the Logos library catalog." }
+    $copy = Join-Path ([System.IO.Path]::GetTempPath()) "logos-export-catalog-$PID"
+    New-Item -ItemType Directory -Force -Path $copy | Out-Null
+    try {
+        foreach ($suffix in '', '-wal', '-shm') {
+            if (Test-Path -LiteralPath "$catalog$suffix") {
+                Copy-Item -LiteralPath "$catalog$suffix" -Destination (Join-Path $copy "catalog.db$suffix") -Force
+            }
+        }
+        , [LogosExportNative]::Query((Join-Path $copy 'catalog.db'), $Sql, $Parameter)
+    }
+    finally { Remove-Item -LiteralPath $copy -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
+# Books whose title, abbreviated title or resource ID contains the text, books in the
+# library first. LinkId is the short ID for logosres: links (such as "bdag").
+function Find-CatalogBooks([string] $Text) {
+    $sql = "select r.ResourceId, r.Title, r.AbbreviatedTitle, r.MilestoneIndexes, r.Availability, " +
+        "(select min(a.AlternateResourceId) from AlternateResourceIds a where a.RecordId = r.RecordId and a.AlternateResourceId not like 'lls:%') " +
+        "from Records r where r.Title like '%' || ?1 || '%' or r.AbbreviatedTitle like '%' || ?1 || '%' or r.ResourceId like '%' || ?1 || '%' " +
+        "order by r.Availability desc, r.Title"
+    foreach ($row in (Invoke-CatalogQuery $sql $Text)) {
+        $linkId = if ($row[5]) { $row[5] } else { $row[0] -replace '^LLS:', '' }
+        [pscustomobject]@{
+            ResourceId = $row[0]; Title = $row[1]; ShortTitle = $row[2]; Indexes = "$($row[3])"
+            InLibrary = $row[4] -eq '2'; LinkId = $linkId
+        }
+    }
+}
+
+# How a book is numbered, from its catalog record: 'volumes' (volume and page),
+# 'pages', or 'none'.
+function Get-Numbering($Record) {
+    if ($Record.Indexes -match '(^|\t)Reference;vp;') { 'volumes' }
+    elseif ($Record.Indexes -match '(^|\t)Reference;page;') { 'pages' }
+    else { 'none' }
+}
+
+function Get-NumberingDescription($Record) {
+    switch (Get-Numbering $Record) {
+        'volumes' { 'numbered by volume and page' }
+        'pages' { 'numbered by page' }
+        default { 'without page numbers (export it by section)' }
+    }
+}
+
+# The catalog record of the book being exported, or $null when the catalog can't be
+# read or the title isn't known.
+function Get-BookRecord {
+    if (-not $script:BookTitle) { return $null }
+    try {
+        Find-CatalogBooks $script:BookTitle | Where-Object { $_.Title -eq $script:BookTitle } | Select-Object -First 1
+    }
+    catch {
+        Write-Log "  Could not read the Logos library catalog ($($_.Exception.Message)); working without it."
+        $null
+    }
+}
+
+# Finds the one library book matching -Book.
+function Resolve-Book([string] $Text) {
+    $found = @(Find-CatalogBooks $Text | Where-Object InLibrary)
+    $exact = @($found | Where-Object { $_.Title -eq $Text -or $_.ShortTitle -eq $Text -or $_.ResourceId -eq $Text -or $_.ResourceId -eq "LLS:$Text" -or $_.LinkId -eq $Text })
+    if ($exact.Count -eq 1) { return $exact[0] }
+    if ($found.Count -eq 1) { return $found[0] }
+    if ($found.Count -eq 0) { Stop-Export "No book in your Logos library matches '$Text'. Search with -ListBooks." }
+    $sample = ($found | Select-Object -First 5 | ForEach-Object { $_.Title }) -join '; '
+    Stop-Export "$($found.Count) books in your library match '$Text', for example: $sample. Use the exact title (see -ListBooks)."
+}
+
+function Show-Books([string] $Text) {
+    $found = @(Find-CatalogBooks $Text)
+    $inLibrary = @($found | Where-Object InLibrary)
+    Write-Log "$($inLibrary.Count) books in your library match '$Text':"
+    foreach ($record in $inLibrary) {
+        $short = if ($record.ShortTitle -and $record.ShortTitle -ne $record.Title) { " ($($record.ShortTitle))" } else { '' }
+        Write-Log "  $($record.Title)$short; $(Get-NumberingDescription $record); resource ID $($record.ResourceId)"
+    }
+    $others = $found.Count - $inLibrary.Count
+    if ($others -gt 0) { Write-Log "$others more matching books in the Logos catalog are not in your library." }
+}
+
+# Connects to the book to export: opens the one named with -Book, or else uses the
+# open Print/Export window or the one visible book.
+function Connect-Book {
+    $script:LogosId = Get-LogosProcessId
+    if ($Book) {
+        $record = Resolve-Book $Book
+        return Open-Book $record
+    }
+    Open-Panel
 }
 
 function Select-RangeMode {
@@ -616,9 +843,24 @@ function Save-Html([string] $Path) {
         $suggested = [LogosExportNative]::GetText($nameBox)
         $title = $suggested -replace '\.html$', ''
         Write-Log "Logos suggests the file name '$suggested', so the book is: $title"
-        if ($ExpectTitle -and $suggested.IndexOf($ExpectTitle, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+        # The suggested name is the book's title with characters that can't be in file
+        # names replaced by "_". A long title may be cut short, so only its start is
+        # compared. This catches a Print/Export window left open for another book.
+        $expected = $null
+        $wanted = $null
+        if ($ExpectTitle) {
+            $wanted = $ExpectTitle
+            $expected = $ExpectTitle -replace '[\\/:*?"<>|]', '_'
+        }
+        elseif ($script:BookTitle) {
+            $wanted = $script:BookTitle
+            $full = $script:BookTitle -replace '[\\/:*?"<>|]', '_'
+            $expected = $full.Substring(0, [Math]::Min(60, $full.Length))
+        }
+        if ($expected -and $suggested.IndexOf($expected, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
             [LogosExportNative]::Close($dialog)
-            throw "The open book does not match '$ExpectTitle'. Cancelled the save; nothing was written."
+            throw ("The Print/Export window is not for '$wanted'. Cancelled the save; nothing was written. " +
+                "Close Print/Export and run again, or name the book with -Book.")
         }
         $script:FirstExport = $false
     }
@@ -970,8 +1212,7 @@ function Export-SectionUnit($Unit, [string] $Title, [string[]] $SubTitles, [int]
 }
 
 function Export-Sections {
-    $script:LogosId = Get-LogosProcessId
-    $script:Panel = Open-Panel
+    $script:Panel = Connect-Book
     $tops = Get-TopSections
     $numbers = @(ConvertFrom-SectionList $Sections $tops.Count)
     $width = ([string]$tops.Count).Length
@@ -1196,17 +1437,28 @@ function Export-Volume([int] $Vol) {
 }
 
 function Export-Book {
-    $script:LogosId = Get-LogosProcessId
-    $script:Panel = Open-Panel
+    $script:Panel = Connect-Book
     Select-RangeMode
 
-    # The range box shows "Volume 1, Page i" for a book with volumes. It may also still
-    # hold a range typed earlier for another book, so the other style is tried as well,
-    # unless an earlier run of this export already found out.
+    # The library catalog says whether the book is numbered by volume and page, by page,
+    # or not at all. Without the catalog, the range box is a hint: it shows "Volume 1,
+    # Page i" for a book with volumes, but may still hold a range typed earlier for
+    # another book, so then the other style is tried as well.
+    $record = Get-BookRecord
+    $numbering = $null
+    if ($record) {
+        $numbering = Get-Numbering $record
+        Write-Log "The library catalog says this book is $(Get-NumberingDescription $record)."
+        if ($numbering -eq 'none') {
+            Stop-Export "This book has no page numbers in Logos, so it can't be exported by page range. Export it by section instead (-ListSections, then -Sections)."
+        }
+    }
     $progress = Get-Progress
     $looksMultiVolume = (Get-RangeText) -match $MultiVolumePattern
     $styles = if ($Volume -gt 0 -or $Volumes -gt 0 -or ($progress -match '^[1-9]\d* ')) { @($true) }
               elseif ($progress -match '^0 ') { @($false) }
+              elseif ($numbering -eq 'volumes') { @($true) }
+              elseif ($numbering -eq 'pages') { @($false) }
               elseif ($looksMultiVolume) { @($true, $false) }
               else { @($false, $true) }
     foreach ($withVolumes in $styles) {
@@ -1244,8 +1496,7 @@ function Export-Book {
 # Tries one range in the range box and reports how Logos takes it, without saving
 # anything: for exploring how a book is numbered before exporting it.
 function Invoke-Probe([string] $Text) {
-    $script:LogosId = Get-LogosProcessId
-    $script:Panel = Open-Panel
+    $script:Panel = Connect-Book
     Select-RangeMode
     $typed = $Text -replace '(?<=[0-9ivxlcdm])\s*-\s*(?=[0-9ivxlcdm])', $EnDash
     $before = Wait-Settled
@@ -1273,6 +1524,8 @@ $script:Saved = 0
 $script:FirstExport = $true
 $script:TooBig = @()
 $script:Paused = $false
+$script:BookTitle = $null
+$script:Final = $false
 
 # Dot-sourcing the script (". .\export-book.ps1 -OutDir <folder>") only loads its
 # functions, so single steps can be tried by hand.
@@ -1282,11 +1535,11 @@ if ($MyInvocation.InvocationName -eq '.') { return }
 # them as question marks when its output is captured.
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
-if ($ListSections -or $Probe) {
+if ($ListBooks -or $ListSections -or $Probe) {
     try {
-        if ($ListSections) {
-            $script:LogosId = Get-LogosProcessId
-            $script:Panel = Open-Panel
+        if ($ListBooks) { Show-Books $ListBooks }
+        elseif ($ListSections) {
+            $script:Panel = Connect-Book
             Show-Sections
         }
         else { Invoke-Probe $Probe }
@@ -1318,8 +1571,10 @@ try {
 }
 catch {
     Write-Log "Stopped: $($_.Exception.Message)"
-    Write-Log 'Run the same command again to continue; finished chunks are kept.'
-    [void](Test-Output)
+    if (-not $script:Final) {
+        Write-Log 'Run the same command again to continue; finished chunks are kept.'
+        [void](Test-Output)
+    }
     Write-Log 'Status: stopped'
     exit 1
 }

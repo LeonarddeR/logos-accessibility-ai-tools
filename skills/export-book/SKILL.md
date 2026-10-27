@@ -21,7 +21,7 @@ If PowerShell refuses to run scripts (the default execution policy on Windows cl
 
 ## Before you start
 
-1. **Logos is running with the book open.** The script exports the book whose Print/Export window is open. If none is open, it opens one with Ctrl+P on the visible book; that only works when exactly one book is visible. If the user asks you to open or switch books yourself (for example because they're away), `references/print-export-ui.md` describes how: close books with Ctrl+F4, open one through the Command box (Alt+C). That sends real keystrokes, so only do it when the user isn't typing.
+1. **Which book.** Logos must be running. The best way is to name the book with `-Book`: its title, its abbreviated title ("BDAG", "Louw-Nida", "NIDNTTE") or its resource ID. The script then opens the book itself, through Logos's own `logosres:` link, and opens Print/Export on it, even when other books are open. A Print/Export window left open for another book is closed first. To find the exact title, search the library with `-ListBooks "<part of the title>"`; if several books match, read them to the user and ask which one. Without `-Book`, the script uses the open Print/Export window, or opens one with Ctrl+P on the one visible book.
 2. **Output folder.** Ask where the files should go unless the user said so. Page files are named after their range: `i-xxv.html` (front matter), `1-100.html`, …, `1101-1108.html`; books with volumes get a prefix: `v1-i-xxiii.html`, `v1-1-100.html`, `v2-1-100.html`. Section files are named after the section: `08 ΚΑΤΑ ΜΑΘΘΑΙΟΝ.html`. Existing files in the folder count as done and are skipped, so an interrupted export continues where it stopped.
 3. **Tell the user** that Logos will be busy (roughly 15–40 seconds per chunk) and shouldn't be used meanwhile; typing in Logos can disturb the automation.
 
@@ -31,6 +31,7 @@ If PowerShell refuses to run scripts (the default execution policy on Windows cl
 
 For a book you haven't exported before, look before you export:
 
+- The script reads Logos's library catalog and logs how the book is numbered: by page, by volume and page, or not at all. A book without page numbers (Bibles, some datasets) can only be exported by section; the script says so and stops. `-ListBooks` shows the same for every match.
 - `-ListSections` prints the book's top-level sections, numbered. It shows the structure (volumes, front matter, indexes, Bible books) and whether exporting by section makes more sense. If it might, ask the user.
 - `-Probe "Pages 1-100"` or `-Probe "Volume 1, Pages 1-100"` types one range into Print/Export and reports how Logos rewrote it and how many printed pages it gave, without saving anything. Logos narrows a range to the pages that exist, so probes reveal volumes, gaps and dense pages. For example, "Volume 2, Pages 4-100" became "Volume 2, Pages 73-100" in a book whose volume 2 text starts at page 73.
 - The title often tells you things: "Volumes 1–5" means `-Volumes 5`.
@@ -73,8 +74,10 @@ A section that fills Logos's 100 printed pages is split into halves of its subse
 
 ## Options
 
-- `-OutDir <folder>`: where the files go (not needed with `-ListSections` or `-Probe`).
-- `-ExpectTitle "<part of the title>"`: stop before saving anything unless the book in Print/Export has this in its title. Logos puts the title in the Save As dialog's suggested file name; the script logs it on the first save. Pass it whenever the user names the book.
+- `-OutDir <folder>`: where the files go (not needed with `-ListBooks`, `-ListSections` or `-Probe`).
+- `-Book "<title, abbreviated title or resource ID>"`: the book to open and export (also works with `-ListSections`, `-Probe` and `-Sections`). It must match exactly one book in the library.
+- `-ListBooks "<text>"`: list the library books whose title, abbreviated title or resource ID contains the text, with how each is numbered.
+- `-ExpectTitle "<part of the title>"`: stop before saving anything unless the book in Print/Export has this in its title. Logos puts the title in the Save As dialog's suggested file name; the script logs it on the first save. Without this option the script compares with the title of the book it opened or found, so a Print/Export window left open for another book is always caught.
 - `-MaxChunks N`: stop after N new files (`Status: paused`).
 - `-Volume 2`: only volume 2. `-Volumes 5`: the book has 5 volumes; don't look for more.
 - `-Start 501`, `-End 600`: limit the numbered pages of each volume (front matter only when starting at 1).
@@ -98,13 +101,14 @@ A section that fills Logos's 100 printed pages is split into halves of its subse
 The script stops with a `Stopped:` line that says which step failed. Finished files are kept; after fixing the cause, the same command continues.
 
 - **Ctrl+P didn't open Print/Export**: a key held down physically (screen readers use Caps Lock or Insert as a modifier) can combine with the simulated keystroke. Ask the user to press Ctrl+P on the book, then rerun.
-- **No book or several books visible**: same fix. The user opens Print/Export on the right book.
-- **Title mismatch**: the wrong book is active. Ask the user to switch, or switch yourself if allowed.
+- **No book or several books visible**: name the book with `-Book`.
+- **Title mismatch**: the Print/Export window belonged to another book. Run again with `-Book`, which closes it and opens the right one.
+- **The catalog can't be read** (very old Windows without `winsqlite3.dll`, or a changed Logos data folder): the script says so and carries on without it, finding out the numbering by trying ranges.
 - **Claude Code stopped a long background run because memory was low**: that's not the script's fault. Don't restart on your own; tell the user. Batches with `-MaxChunks` in the foreground avoid it.
 
 If controls can't be found, or Logos behaves differently than described, read `references/print-export-ui.md` before changing the script. It describes the Print/Export window, how every control behaves, the quirks found so far, and how to inspect the UI. Don't search inside the Save As dialog with UI Automation: its tree includes the folder's file list and takes minutes to walk.
 
 ## Not covered yet
 
-- **Several books side by side**: Logos won't move keyboard focus to a book through UI Automation, so Ctrl+P goes to whichever book was last active. Have the user (or you, if allowed) leave only the book to export open, or open Print/Export on it by hand.
-- **Books without page numbers** (some resources only have sections or articles) haven't been tested beyond what section mode covers. If Logos ignores every page range, try section mode and tell the user.
+- **Books whose sections are too big even when split one level deep** need a page-range export of that part, which isn't possible for books without page numbers. The script reports such parts at the end.
+- **The book files themselves** (`.logos4` in Logos's data folder) are encrypted and tied to the user's license. Don't try to read or decrypt them, even when the user owns the books: that would bypass Logos's copy protection. Print/Export is the supported way to get the text out, and it's what this skill uses.
