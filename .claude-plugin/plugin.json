@@ -1,0 +1,11 @@
+{
+  "name": "logos-accessibility-skills",
+  "description": "Accessibility skills for Logos Bible Software on Windows, so that work which is tedious or hard to check without sight can be left to Claude. First skill: export whole books to HTML through Logos's own Print/Export panel, by page range or by section.",
+  "version": "0.1.0",
+  "license": "MIT",
+  "author": {
+    "name": "Leonard de Ruijter",
+    "email": "alderuijter@gmail.com"
+  },
+  "keywords": ["logos", "bible-software", "accessibility", "screen-reader", "export", "html", "ui-automation"]
+}

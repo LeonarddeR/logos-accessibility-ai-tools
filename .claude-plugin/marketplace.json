@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "logos-accessibility-ai-tools",
+  "owner": {
+    "name": "Leonard de Ruijter",
+    "email": "alderuijter@gmail.com"
+  },
+  "description": "Claude Code plugins that make Logos Bible Software easier to use without sight.",
+  "plugins": [
+    {
+      "name": "logos-accessibility-skills",
+      "source": "./",
+      "description": "Accessibility skills for Logos Bible Software. First skill: export whole books to HTML through the Print/Export panel, by page range or by section.",
+      "category": "productivity"
+    }
+  ]
+}
