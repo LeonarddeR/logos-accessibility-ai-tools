@@ -1,13 +1,13 @@
 ---
 name: export-book
-description: Export a whole book (resource) from Logos Bible Software or Verbum to HTML files, by driving Logos's Print/Export panel with Windows UI Automation from a bundled PowerShell script. It works by page range (about 100 pages per file, handling volumes, roman-numbered front matter and skipped page numbers) or by section (for example one file per Bible book of a commentary or apparatus). Use this whenever the user wants to export, save, back up, convert or get the full text of a Logos book, lexicon, commentary, apparatus or other resource as HTML, mentions the Print/Export 100-page limit, or asks to automate Print/Export in Logos, even if they don't say "HTML" or "skill".
+description: Export a whole book (resource) from Logos Bible Software to HTML files, by driving Logos's Print/Export panel with Windows UI Automation from a bundled PowerShell script. It works by page range (about 100 pages per file, handling volumes, roman-numbered front matter and skipped page numbers) or by section (for example one file per Bible book of a commentary or apparatus). Use this whenever the user wants to export, save, back up, convert or get the full text of a Logos book, lexicon, commentary, apparatus or other resource as HTML, mentions the Print/Export 100-page limit, or asks to automate Print/Export in Logos, even if they don't say "HTML" or "skill".
 ---
 
 # Export a Logos book to HTML
 
 Logos's Print/Export panel lays out at most 100 printed pages at a time, so exporting a whole book by hand means repeating the same routine dozens of times: type a page range, press Enter, wait, click "Web Page (HTML)", name the file, save. `scripts/export-book.ps1` does that routine reliably. Your part is the judgement around it: find out how the book is built, run the export in batches, check each batch, steer when something looks off, and keep the user informed.
 
-The user may not be able to see the screen (for example, they use a screen reader). Report every stage in words: what is happening, which pages are done, what failed and why. Don't rely on the user looking at Logos to tell what happened, and give them the log's meaning, not raw log lines.
+The user may not be able to see the screen (for example, they use a screen reader). Report every stage in words: what is happening, which pages are done, what failed and why. Don't rely on the user looking at Logos to tell what happened, and give them the log's meaning, not raw log lines. Tell them only what the log, the files or the final check show; if you want to say more, such as where a part of the book starts, look it up in the files first or say that you didn't check.
 
 ## The script
 
@@ -21,7 +21,7 @@ If PowerShell refuses to run scripts (the default execution policy on Windows cl
 
 ## Before you start
 
-1. **Which book.** Logos must be running. The best way is to name the book with `-Book`: its title, its abbreviated title ("BDAG", "Louw-Nida", "NIDNTTE") or its resource ID. The script then opens the book itself, through Logos's own `logosres:` link, and opens Print/Export on it, even when other books are open. A Print/Export window left open for another book is closed first. To find the exact title, search the library with `-ListBooks "<part of the title>"`; if several books match, read them to the user and ask which one. Without `-Book`, the script uses the open Print/Export window, or opens one with Ctrl+P on the one visible book.
+1. **Which book.** Logos must be running. The best way is to name the book with `-Book`: its title, its abbreviated title (the short name Logos uses, such as "BDAG") or its resource ID. The script then opens the book itself, through Logos's own `logosres:` link, and opens Print/Export on it, even when other books are open. A Print/Export window left open for another book is closed first. To find the exact title, search the library with `-ListBooks "<part of the title>"`; if several books match, read them to the user and ask which one. Without `-Book`, the script uses the open Print/Export window, or opens one with Ctrl+P on the one visible book.
 2. **Output folder.** Ask where the files should go unless the user said so. Page files are named after their range: `i-xxv.html` (front matter), `1-100.html`, …, `1101-1108.html`; books with volumes get a prefix: `v1-i-xxiii.html`, `v1-1-100.html`, `v2-1-100.html`. Section files are named after the section: `08 ΚΑΤΑ ΜΑΘΘΑΙΟΝ.html`. Existing files in the folder count as done and are skipped, so an interrupted export continues where it stopped.
 3. **Tell the user** that Logos will be busy (roughly 15–40 seconds per chunk) and shouldn't be used meanwhile; typing in Logos can disturb the automation.
 
@@ -31,7 +31,7 @@ If PowerShell refuses to run scripts (the default execution policy on Windows cl
 
 For a book you haven't exported before, look before you export:
 
-- The script reads Logos's library catalog and logs how the book is numbered: by page, by volume and page, or not at all. A book without page numbers (Bibles, some datasets) can only be exported by section; the script says so and stops. `-ListBooks` shows the same for every match.
+- The script reads Logos's library catalog and logs how the book is numbered: by page, by volume and page, or not at all. A book without page numbers (Bibles, some datasets) can only be exported by section; the script says so and stops. Continue with "Exporting by section" below. `-ListBooks` shows the same for every match.
 - `-ListSections` prints the book's top-level sections, numbered. It shows the structure (volumes, front matter, indexes, Bible books) and whether exporting by section makes more sense. If it might, ask the user.
 - `-Probe "Pages 1-100"` or `-Probe "Volume 1, Pages 1-100"` types one range into Print/Export and reports how Logos rewrote it and how many printed pages it gave, without saving anything. Logos narrows a range to the pages that exist, so probes reveal volumes, gaps and dense pages. For example, "Volume 2, Pages 4-100" became "Volume 2, Pages 73-100" in a book whose volume 2 text starts at page 73.
 - The title often tells you things: "Volumes 1–5" means `-Volumes 5`.
@@ -60,17 +60,25 @@ For a book you already know well, a single run without `-MaxChunks` in the backg
 
 The final check looks at the whole folder. Within each volume, the front matter and the numbered pages must each follow on without gaps, except for the page numbers Logos reported as absent. Every file must end with `</html>`. When the book shows page numbers in its text, it also checks that each file holds the pages its name promises. Report the result, including any skipped page numbers, so the user knows those are absent from the book and not lost in the export.
 
+When the exported text has pictures, Logos saves them in a folder next to the file, named after it with `_files` added (`05 Genesis_files`). Tell the user to keep each folder with its file, or the pictures won't show.
+
 The export contains what Logos shows, so display settings carry over. In particular, page numbers appear in the text (as `p 1102` or `V 1, p 802`) only when they are switched on in Logos. If the user wants them in the output, or wants the stronger check, suggest switching them on before exporting.
 
 ## Exporting by section
 
-Some books are better split by their own structure, for example the NA28 apparatus per Bible book.
+Books without page numbers can only be exported this way. Other books are sometimes better split by their own structure, for example a commentary or apparatus with one part per Bible book.
 
-1. `-ListSections` lists the top-level sections, numbered.
-2. Tell the user the list in words and ask which sections to export. Always ask, even if the answer seems obvious: the user wants to choose.
+1. `-ListSections` lists the top-level sections, numbered, in the book's own order. The numbers are positions in the book: in a Bible with four front-matter sections, Genesis is 05.
+2. Settle which sections with the user. The user wants to choose, so don't pick a part of the book yourself, even if it seems obvious.
+   - The user named a part ("only the four Gospels"): match it to the section numbers and go ahead.
+   - The user asked for the whole book and every section is main text: export them all.
+   - The user asked for the whole book, but the list also has front matter, indexes, tables or other back matter: tell them the list in words and ask whether they want those parts too. They are often not wanted, and a whole book by section can keep Logos busy for half an hour or more.
+   - Anything else: tell them the list in words and ask.
 3. Export them with `-Sections "8-34"` (numbers and ranges, such as `"1,3,8-10"`), together with `-OutDir`. `-MaxChunks` works here too.
 
 A section that fills Logos's 100 printed pages is split into halves of its subsections, as often as needed, named after the first and last subsection: `10 ΚΑΤΑ ΛΟΥΚΑΝ, Inscriptio to Chapter 11.html`. Splitting goes one level deep; a single subsection that is still too big is reported at the end and needs a page-range export instead. The script leaves the last exported section ticked in Print/Export.
+
+When page numbers are shown in the text, the number of the page where a section begins can sit just before the section's heading, and so ends up in neither file. The text is complete; only that page number is missing. Tell the user, so they don't think a page was lost.
 
 ## Options
 
@@ -86,7 +94,6 @@ A section that fills Logos's 100 printed pages is split into halves of its subse
 - `-Sections "8-34"`, `-ListSections`, `-Probe "<range>"`: see above.
 - `-Overwrite`: export again even if files exist, and ignore `export-progress.txt`.
 - `-VerifyOnly`: only run the final check on `-OutDir`; doesn't touch Logos.
-- `-ProcessName Verbum`: for Verbum, Logos's Catholic edition.
 - `-PrintedPageLimit 20`: pretend Logos's limit is lower, only to test splitting.
 
 ## How a chunk is exported

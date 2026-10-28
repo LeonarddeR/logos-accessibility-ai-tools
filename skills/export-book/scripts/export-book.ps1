@@ -84,8 +84,6 @@ param(
     [switch] $Overwrite,
     # Only check the files in OutDir; don't touch Logos.
     [switch] $VerifyOnly,
-    # Process name of the Logos application (Verbum uses "Verbum").
-    [string] $ProcessName = 'Logos',
     # Logos's limit on printed pages per export. Lower it only to test how the script
     # splits ranges and sections.
     [int] $PrintedPageLimit = 100,
@@ -372,7 +370,7 @@ function Get-ChunkName([int] $Vol, [bool] $Roman, [int] $First, [int] $Last) {
 # --- Logos windows --------------------------------------------------------------------
 
 function Get-LogosProcessId {
-    $process = Get-Process -Name $ProcessName -ErrorAction SilentlyContinue | Select-Object -First 1
+    $process = Get-Process -Name Logos -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $process) { throw "Logos is not running. Start Logos, open the book, and run again." }
     $process.Id
 }
@@ -505,8 +503,8 @@ function Open-Book($Record) {
 # the script reads a copy.
 
 function Get-CatalogPath {
-    $exe = (Get-Process -Name $ProcessName -ErrorAction SilentlyContinue | Select-Object -First 1).Path
-    $root = if ($exe) { Split-Path (Split-Path $exe) } else { Join-Path $env:LOCALAPPDATA $ProcessName }
+    $exe = (Get-Process -Name Logos -ErrorAction SilentlyContinue | Select-Object -First 1).Path
+    $root = if ($exe) { Split-Path (Split-Path $exe) } else { Join-Path $env:LOCALAPPDATA 'Logos' }
     Get-ChildItem -Path (Join-Path $root 'Data\*\LibraryCatalog\catalog.db') -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
 }

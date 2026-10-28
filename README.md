@@ -25,7 +25,7 @@ Everything Claude does is reported in words, and the script writes a log (`expor
 
 Requirements:
 - Windows 10 or 11, with Windows PowerShell 5.1 (built in) or PowerShell 7.
-- Logos Bible Software (or Verbum), running.
+- Logos Bible Software, running.
 - Nothing else needs to be installed.
 
 Example requests:

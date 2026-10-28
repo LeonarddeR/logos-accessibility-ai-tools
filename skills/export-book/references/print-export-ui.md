@@ -4,7 +4,7 @@ Notes from inspecting Logos (desktop app, WPF, October 2026) with UI Automation.
 
 ## Windows
 
-All windows belong to the Logos process (`Logos.exe`; Verbum is `Verbum.exe`).
+All windows belong to the Logos process (`Logos.exe`).
 
 - **Main window**: title like "Logos Legacy Edition". Each open book is a `TabItem` whose name is the book title. The book text is an `Edit` element named "Document".
 - **Print/Export**: a separate top-level window titled "Print/Export". Ctrl+P on a book opens it, for the book that was active at that moment. Window class `HwndWrapper[Logos;;...]`.
@@ -28,26 +28,26 @@ Find controls by automation id or name. winapp's generated slugs (such as `lnk-t
   - A range that starts past the last page is rejected, and the previous valid range is put back. "Pages 1201–1300" turns back into "Pages 1101–1108".
   - Logos never complains about either case; only the text changes.
 - **Enter then starts a layout, but not always.** If Enter comes right after the text was set, it sometimes only rewrites the text and lays nothing out; a second Enter is needed. A pause of about 3 seconds between setting the text and pressing Enter makes a single Enter work in most cases. The script waits 3 seconds, checks whether a layout started, and presses Enter again if not.
-- **During a layout** the page counter and the NextPage button disappear from the UI tree, and Logos's UI thread is often busy: UI Automation calls block until it is free. 100 book pages of BDAG take about 15–20 seconds. A short range (8 pages) finishes in about a second, so the disappearance is easy to miss; then a changed page count is the only sign.
+- **During a layout** the page counter and the NextPage button disappear from the UI tree, and Logos's UI thread is often busy: UI Automation calls block until it is free. 100 pages of a dense dictionary take about 15–20 seconds. A short range (8 pages) finishes in about a second, so the disappearance is easy to miss; then a changed page count is the only sign.
 - **After a layout** the range box sometimes shows the preview position ("Page 3", "Page 103") instead of the range. Read the rewritten range right after Enter, not later.
 - **The cap**: Logos lays out at most 100 printed pages. Asking for the whole book ("Pages 1–99999") gave "1 of 100" and kept Logos busy for about 5 minutes. Never ask for huge ranges. A count of 100 means the chunk was probably cut off; the script then retries with smaller chunks.
-- **Printed pages per book page** depend on the book's page size: 100 BDAG pages gave 92–93 printed pages, 100 Louw-Nida pages about 50.
-- **Selecting the range option** makes Logos lay out whatever range the box then holds. In Louw-Nida, Logos replaced the box text with the reading position ("Volume 1, Page i"). In BDAG it once restored an earlier huge range, which made the first chunk look like it had hit the cap. The script therefore waits until the counter has been steady for 3 seconds before every range.
+- **Printed pages per book page** depend on the book's page size and density: 100 pages of a large dictionary gave about 93 printed pages, 100 pages of a smaller book about 50, and the dense index of another book came close to 100 printed pages for only a few book pages.
+- **Selecting the range option** makes Logos lay out whatever range the box then holds. In one book, Logos replaced the box text with the reading position ("Volume 1, Page i"). In another, it once restored an earlier huge range, which made the first chunk look like it had hit the cap. The script therefore waits until the counter has been steady for 3 seconds before every range.
 
 ## Books with volumes and front matter
 
-Tested with Louw-Nida, "Greek-English Lexicon of the New Testament based on Semantic Domains" (2 volumes).
+Seen in books whose page numbers are counted per volume (the catalog's `Reference;vp`, see below).
 
 - **Range syntax**: "Volume 1, Pages 1–100". A range without a volume ("Pages 101–150", "Page 5") is ignored.
 - **Recognising such a book**: after selecting the range option, the box showed "Volume 1, Page i".
 - **Rewritten ranges use a short form**: "Volume 1, Pages 801–2000" became "Vol. 1, pp 801–841"; "Volume 2, Pages 301–2000" became "Vol. 2, pp 301–334".
 - **Front matter**: roman page numbers work like numbers. "Volume 1, Pages i–c" (c = 100) became "Vol. 1, pp i–xxiii".
-- **Ranges that don't exist are ignored here**: the text stays as typed and nothing is laid out. Examples: "Volume 1, Pages 3000–3100", "Volume 2, Pages i–c" (volume 2 has no front matter), "Volume 3, Pages 1–100" (no volume 3). BDAG behaves differently and puts the previous range back. An ignored range can't be told apart from an Enter that came too early, so the script tries twice before concluding the pages don't exist.
-- **Sections tree**: the "Use these sections" tree lists Title Page, Preface, Introduction, Bibliography, the 93 domains of volume 1, and one "Volume 2" item.
+- **Ranges that don't exist are ignored here**: the text stays as typed and nothing is laid out. Examples: "Volume 1, Pages 3000–3100", "Volume 2, Pages i–c" (volume 2 has no front matter), "Volume 3, Pages 1–100" (no volume 3). A book without volumes put the previous range back instead (see above). An ignored range can't be told apart from an Enter that came too early, so the script tries twice before concluding the pages don't exist.
+- **Sections tree**: the "Use these sections" tree follows the book's own structure, so it doesn't always match the volumes. In one two-volume book it listed the front matter and every chapter of volume 1 as top-level items, with all of volume 2 as a single "Volume 2" item.
 
 ## Books that skip page numbers
 
-Tested with NIDNTTE, "New International Dictionary of New Testament Theology and Exegesis, Volumes 1–5" (one resource, five volumes).
+Seen in a book of several volumes in one resource, in which some page numbers don't exist in Logos.
 
 Logos narrows every range to the pages that exist:
 - "Volume 1, Pages 1–100" became "Volume 1, Pages 1–3": page 4 doesn't exist, and the range stops before it.
@@ -62,7 +62,7 @@ The page markers in the HTML of a multi-volume book read "V 1, p 2".
 ## Saving
 
 - **Invoking "Web Page (HTML)"** (InvokePattern) opens the Save As dialog. The Invoke call doesn't return until the dialog closes, so the script makes it on a separate thread. winapp's `invoke` reports "does not support any invoke pattern" here, even though the dialog does open.
-- **The file name box** (`Edit`, control id 1001) has keyboard focus when the dialog opens. Its default text is the book title plus ".html", for example "A Greek-English Lexicon of the New Testament and Other Early Christian Literature, 3rd ed..html". The script logs this, and `-ExpectTitle` checks against it.
+- **The file name box** (`Edit`, control id 1001) has keyboard focus when the dialog opens. Its default text is the book title plus ".html". Characters that can't be in a file name are replaced, a colon by "_", and a title ending in a period gives two periods ("…, 3rd ed..html"). The script logs this, and `-ExpectTitle` checks against it.
 - **Searching the Save As dialog with UI Automation is very slow.** Its tree includes the folder's file list, so a winapp search or set-value there took 60 seconds or never finished. The script finds the focused box with Win32 (GetGUIThreadInfo), sets the full path with WM_SETTEXT, and posts Enter to it.
 - **Writing the file** takes about 10 seconds for 100 pages, roughly 3.5–4 MB of HTML. The file is complete when it ends with `</html>`.
 - **Output format**: Word-style HTML with inline styles, `ref.ly` links, and a footer naming the book and the export time ("Exported from Logos Bible Study, 7:01 PM October 27, 2026"). Apart from that timestamp, two exports of the same range are identical.
@@ -74,20 +74,20 @@ The page markers in the HTML of a multi-volume book read "V 1, p 2".
 
 ## Logos's data folder and library catalog
 
-Logos keeps its data in `%LOCALAPPDATA%\Logos\Data\<random id>\` (Verbum: `%LOCALAPPDATA%\Verbum\...`):
+Logos keeps its data in `%LOCALAPPDATA%\Logos\Data\<random id>\`:
 
-- **Books**: `ResourceManager\Resources\*.logos4`, for example `BDAG.logos4`, `LOUWNIDA.logos4`, `NA28APPARATUS.logos4`. A short readable header ("LRES01", then the resource ID such as "LLS:46.30.18") is followed by encrypted content tied to the user's license. Don't try to read or decrypt them: that would bypass Logos's copy protection. Next to them are datasets in other formats (`.lbs…`).
+- **Books**: `ResourceManager\Resources\*.logos4`, mostly named after the book's short ID (see `AlternateResourceIds` below). A short readable header ("LRES01", then the resource ID) is followed by encrypted content tied to the user's license. Don't try to read or decrypt them: that would bypass Logos's copy protection. Next to them are datasets in other formats (`.lbs…`).
 - **Library catalog**: `LibraryCatalog\catalog.db`, an SQLite database that Logos keeps open (WAL mode), so the script copies `catalog.db`, `-wal` and `-shm` to a temporary folder and reads the copy with Windows's own `winsqlite3.dll`.
-- **Resource administration**: `ResourceManager\ResourceManager.db` (SQLite) lists the 432 books actually in this library (table `Resources`).
+- **Resource administration**: `ResourceManager\ResourceManager.db` (SQLite) lists the books actually in the user's library (table `Resources`).
 
 The catalog's `Records` table has one row per book Logos knows about, including many the user doesn't own. The useful columns:
 
-- `ResourceId`, such as `LLS:46.30.18` (BDAG), `LLS:46.30.4` (Louw-Nida), `LLS:NIDNTTREV` (NIDNTTE), `LLS:NA28APPARATUS`.
-- `Title` (as on the book's tab in Logos) and `AbbreviatedTitle` ("BDAG", "Louw-Nida", "NIDNTTE", "NA28 Apparatus").
-- `Availability`: 2 for books in the user's library (432 records, matching `ResourceManager.db`), 1 for the others.
-- `MilestoneIndexes`, how the book is indexed, as tab-separated `kind;scheme;…` items. `Reference;page` means page numbers (BDAG), `Reference;vp` means volume and page (Louw-Nida, NIDNTTE), `Reference;bible+…` means Bible verses. Bibles have no page index at all, so they can only be exported by section.
+- `ResourceId`: either numeric, such as `LLS:46.30.18`, or a readable code, such as `LLS:NA28APPARATUS`.
+- `Title` (as on the book's tab in Logos) and `AbbreviatedTitle`, the short name Logos uses, such as "BDAG".
+- `Availability`: 2 for books in the user's library (matching `ResourceManager.db`), 1 for the others.
+- `MilestoneIndexes`, how the book is indexed, as tab-separated `kind;scheme;…` items. `Reference;page` means page numbers, `Reference;vp` means volume and page, `Reference;bible+…` means Bible verses. Bibles have no page index at all, so they can only be exported by section.
 
-The table `AlternateResourceIds` holds short IDs such as `bdag`, `louwnida`, `nidnttrev`, `na28apparatus` (plus `lls:…` variants). These are the IDs in Logos's links: `https://ref.ly/logosres/bdag?…` in exported HTML, and `logosres:bdag`, which opens the book in the running Logos (the protocol is registered to Logos.exe). The script uses that to open a book named with `-Book`. Logos then makes it the active book, so Ctrl+P opens Print/Export for it even with other books on screen.
+The table `AlternateResourceIds` holds short IDs such as `bdag` (plus `lls:…` variants). These are the IDs in Logos's links: `https://ref.ly/logosres/bdag?…` in exported HTML, and `logosres:bdag`, which opens the book in the running Logos (the protocol is registered to Logos.exe). The script uses that to open a book named with `-Book`. Logos then makes it the active book, so Ctrl+P opens Print/Export for it even with other books on screen.
 
 ## Opening and closing books without the mouse
 
